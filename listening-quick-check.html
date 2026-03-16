@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Listening Quick Check 🎧</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: linear-gradient(135deg, #f5f3ff 0%, #e0f2fe 50%, #fefce8 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px 16px 48px;
+    }
+    #app { width: 100%; max-width: 520px; }
+
+    @keyframes fadeUp  { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes popIn   { 0%{transform:scale(0.6);opacity:0} 65%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
+    @keyframes wavego  { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1.9)} }
+    @keyframes shake   { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+    @keyframes correct { 0%{transform:scale(1)} 50%{transform:scale(1.18)} 100%{transform:scale(1)} }
+    @keyframes pulse   { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+
+    .fa  { animation: fadeUp 0.4s ease both; }
+    .opt {
+      width:100%; text-align:left; padding:10px 13px;
+      border-radius:11px; border:2px solid #e0d9ff;
+      background:#fff; cursor:pointer; font-family:inherit;
+      font-size:13px; font-weight:500; color:#3d2b8c;
+      transition:all 0.15s; line-height:1.4;
+    }
+    .opt:hover { border-color:#a78bfa; background:#f5f0ff; }
+    .opt.sel   { border-color:#7c3aed; background:#ede9fe; color:#5b21b6; }
+
+    .bubble {
+      border:none; border-radius:50px; padding:11px 20px;
+      font-family:inherit; font-size:14px; font-weight:700;
+      cursor:pointer; transition:all 0.18s; display:inline-block;
+    }
+    .bubble:hover    { transform:scale(1.08); }
+    .bubble.correct  { animation:correct 0.4s ease; box-shadow:0 0 0 4px #86efac; }
+    .bubble.wrong    { animation:shake 0.35s ease; }
+    .bubble.disabled { cursor:default; opacity:0.5; pointer-events:none; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ═══════════════════════════════════════════════════
+   VOICE ENGINE  — robust cross-browser TTS
+═══════════════════════════════════════════════════ */
+let _voices = [];
+
+function _loadVoices() {
+  if (!window.speechSynthesis) return;
+  const v = window.speechSynthesis.getVoices();
+  if (v.length) _voices = v;
+}
+_loadVoices();
+if (window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = _loadVoices;
+}
+
+function _pickVoice() {
+  if (!_voices.length) _voices = (window.speechSynthesis || {getVoices:()=>[]}).getVoices();
+  const prefer = [
+    'Google UK English Female','Google US English Female',
+    'Google US English','Microsoft Zira - English (United States)',
+    'Microsoft Aria Online (Natural)','Microsoft Jenny Online (Natural)',
+    'Samantha','Karen','Moira','Tessa','Victoria','Fiona'
+  ];
+  for (const name of prefer) {
+    const hit = _voices.find(v => v.name === name);
+    if (hit) return hit;
+  }
+  return _voices.find(v => v.lang && v.lang.startsWith('en')) || _voices[0] || null;
+}
+
+function speak(text, rate, pitch, onDone, onFail) {
+  if (!window.speechSynthesis) { if (onFail) onFail('no-api'); return; }
+  window.speechSynthesis.cancel();
+  // Resume fixes iOS / Chrome suspension
+  try { window.speechSynthesis.resume(); } catch(e){}
+
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate   = rate  || 0.88;
+  utt.pitch  = pitch || 1.05;
+  utt.volume = 1;
+  const v = _pickVoice();
+  if (v) utt.voice = v;
+
+  // Chrome bug: synthesis silently pauses after ~15 s
+  const keepAlive = setInterval(() => {
+    if (!window.speechSynthesis.speaking) { clearInterval(keepAlive); return; }
+    window.speechSynthesis.pause();
+    window.speechSynthesis.resume();
+  }, 12000);
+
+  utt.onend  = () => { clearInterval(keepAlive); if (onDone) onDone(); };
+  utt.onerror = e  => { clearInterval(keepAlive); console.warn('TTS error', e); if (onFail) onFail(e); };
+
+  window.speechSynthesis.speak(utt);
+}
+
+function stopSpeech() {
+  if (window.speechSynthesis) {
+    try { window.speechSynthesis.cancel(); } catch(e){}
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   DATA
+═══════════════════════════════════════════════════ */
+const SC = [
+  {
+    emoji:"💬", label:"Team meeting", avatar:"SJ", speaker:"Sana (Manager)",
+    color:"#7c3aed", light:"#ede9fe", dark:"#5b21b6",
+    line:"Can we push Friday's review to Monday? I have a client conflict at 3pm, and Raj is travelling until Sunday.",
+    qs:[
+      {dim:"R", text:"Why can't Sana do Friday's review?",
+       opts:["She's travelling","She has a client conflict","She forgot","She's on leave"], cor:1},
+      {dim:"C", text:"What is Sana actually asking for?",
+       opts:["Cancel the review","Find a new time that works","Assign it to Raj","Do it without her"], cor:1},
+      {dim:"S", text:"While someone speaks, you are usually:",
+       opts:["Fully focused","Half-listening","Checking your phone","Planning your reply"], self:[5,3,1,2]}
+    ]
+  },
+  {
+    emoji:"📞", label:"Client call", avatar:"RK", speaker:"Rahul (Client)",
+    color:"#0891b2", light:"#cffafe", dark:"#164e63",
+    line:"The deliverable was good but it came two days late. Deadlines matter to us — our board meets every Thursday.",
+    qs:[
+      {dim:"R", text:"When does Rahul's board meet?",
+       opts:["Every Monday","Every Wednesday","Every Thursday","Every Friday"], cor:2},
+      {dim:"C", text:"What is Rahul's real message?",
+       opts:["He wants a refund","Timelines affect his internal reputation","He wants a new vendor","Quality was poor"], cor:1},
+      {dim:"S", text:"When a client gives unexpected feedback, you usually:",
+       opts:["Listen openly","Feel defensive but stay quiet","Interrupt to explain","Switch off mentally"], self:[5,3,2,1]}
+    ]
+  },
+  {
+    emoji:"🤝", label:"1-on-1", avatar:"DM", speaker:"Dev (Colleague)",
+    color:"#d97706", light:"#fef3c7", dark:"#92400e",
+    line:"I don't mind the extra work — I just wish someone had asked me first. Being told last minute makes me feel like an afterthought.",
+    qs:[
+      {dim:"R", text:"What is Dev's complaint about timing?",
+       opts:["Too much work","Was told last minute","Wrong type of task","No credit given"], cor:1},
+      {dim:"C", text:"What does Dev really want?",
+       opts:["Less workload","To be consulted and respected","A pay raise","A new team"], cor:1},
+      {dim:"S", text:"When a colleague shares feelings at work, you:",
+       opts:["Listen without jumping to solutions","Nod but think about your tasks","Offer advice immediately","Wait for them to finish then move on"], self:[5,3,2,1]}
+    ]
+  }
+];
+
+const WGAME = [
+  {word:"Empathy",   distractors:["Apathy","Sympathy","Entropy","Emphasis"]},
+  {word:"Feedback",  distractors:["Setback","Backfire","Comeback","Flashback"]},
+  {word:"Deadline",  distractors:["Dateline","Headline","Guideline","Beeline"]},
+  {word:"Conflict",  distractors:["Contrast","Conquer","Contact","Context"]},
+  {word:"Clarity",   distractors:["Charity","Parity","Rarity","Polarity"]},
+  {word:"Strategy",  distractors:["Synergy","Scrutiny","Stagnancy","Trajectory"]},
+  {word:"Rapport",   distractors:["Report","Resort","Retort","Repost"]},
+];
+
+const BCOLS = [
+  {bg:"#ede9fe",fg:"#5b21b6"},{bg:"#cffafe",fg:"#164e63"},
+  {bg:"#fef3c7",fg:"#92400e"},{bg:"#d1fae5",fg:"#065f46"},
+  {bg:"#fce7f3",fg:"#831843"},{bg:"#fff7ed",fg:"#7c2d12"},
+];
+
+const DIM = {
+  R:{label:"Recall",     emoji:"🧠",color:"#7c3aed",bg:"#ede9fe"},
+  C:{label:"Critical",   emoji:"🎯",color:"#0891b2",bg:"#cffafe"},
+  S:{label:"Mindset",    emoji:"🪷",color:"#d97706",bg:"#fef3c7"},
+  G:{label:"Word Catch", emoji:"🎮",color:"#059669",bg:"#d1fae5"}
+};
+
+/* ═══════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════ */
+let ST = {
+  screen:'intro', si:0, playing:false,
+  ans:{}, scores:{R:[],C:[],S:[],G:[]},
+  gi:0, gameRounds:[], gameScore:0, gSpoken:false
+};
+
+const $ = id => document.getElementById(id);
+const sh = a => [...a].sort(() => Math.random() - 0.5);
+
+function render() {
+  const app = $('app'); if (!app) return;
+  stopSpeech();
+  if      (ST.screen==='intro')   app.innerHTML = rIntro();
+  else if (ST.screen==='play')    app.innerHTML = rPlay();
+  else if (ST.screen==='qs')      app.innerHTML = rQs();
+  else if (ST.screen==='game')    app.innerHTML = rGame();
+  else if (ST.screen==='results') { app.innerHTML = rResults(); setTimeout(drawChart, 200); }
+}
+
+/* ═══════════════════════════════════════════════════
+   INTRO
+═══════════════════════════════════════════════════ */
+function rIntro() {
+  return `<div class="fa">
+  <div style="background:linear-gradient(135deg,#ede9fe,#cffafe,#fef3c7,#d1fae5);border-radius:20px;padding:1.5rem;text-align:center;margin-bottom:12px;">
+    <div style="font-size:48px;margin-bottom:8px;">🎧</div>
+    <h1 style="font-size:22px;font-weight:800;color:#1e1b4b;margin-bottom:4px;">Listening Quick Check</h1>
+    <p style="font-size:13px;color:#6b21a8;font-weight:600;">3 audio scenarios + Word Catch game · ~90 sec</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px;">
+    ${[['🧠','Recall','#ede9fe','#5b21b6'],['🎯','Critical','#cffafe','#164e63'],['🪷','Mindset','#fef3c7','#92400e'],['🎮','Word Catch','#d1fae5','#065f46']].map(d=>`
+    <div style="background:${d[2]};border-radius:13px;padding:10px 4px;text-align:center;">
+      <div style="font-size:18px;">${d[0]}</div>
+      <p style="font-size:10px;font-weight:700;color:${d[3]};margin-top:3px;">${d[1]}</p>
+    </div>`).join('')}
+  </div>
+  <div style="background:#fff;border:2px solid #ede9fe;border-radius:16px;padding:1rem 1.25rem;margin-bottom:12px;">
+    ${[['🔊','Real voice speaks each scenario','Make sure volume is ON'],['🙈','Transcript hides — answer from memory','Tests true retention'],['🎮','Word Catch: hear & tap the right word','Tests phonetic accuracy'],['🏅','LinkedIn score badge at the end','Share your result']].map(r=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f3f0ff;">
+      <span style="font-size:17px;">${r[0]}</span>
+      <div><p style="font-size:13px;color:#374151;font-weight:600;">${r[1]}</p><p style="font-size:10px;color:#9ca3af;">${r[2]}</p></div>
+    </div>`).join('')}
+  </div>
+  <div style="background:#fef9c3;border:2px solid #fde047;border-radius:14px;padding:10px 14px;margin-bottom:14px;display:flex;gap:10px;">
+    <span style="font-size:20px;">⚠️</span>
+    <div>
+      <p style="font-size:12px;font-weight:700;color:#713f12;">Best experience tips</p>
+      <p style="font-size:12px;color:#78350f;line-height:1.5;margin-top:2px;">Use <strong>Chrome or Edge</strong> browser · Turn device volume up · On mobile, unmute your phone</p>
+    </div>
+  </div>
+  <div style="text-align:center;">
+    <button onclick="startApp()"
+      style="padding:14px 44px;font-size:15px;font-weight:700;background:linear-gradient(135deg,#7c3aed,#0891b2);color:#fff;border:none;border-radius:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 18px rgba(124,58,237,0.35);">
+      Start ✨
+    </button>
+  </div></div>`;
+}
+
+function startApp() {
+  // Warm-up: unlock audio context on first user gesture (critical for iOS/Chrome)
+  if (window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+      const w = new SpeechSynthesisUtterance(' ');
+      w.volume = 0; w.rate = 10;
+      window.speechSynthesis.speak(w);
+    } catch(e) {}
+    _loadVoices();
+  }
+  ST.screen = 'play'; ST.si = 0;
+  render();
+}
+
+/* ═══════════════════════════════════════════════════
+   SCENARIO PLAY SCREEN
+═══════════════════════════════════════════════════ */
+function rPlay() {
+  const s = SC[ST.si];
+  const bars = Array.from({length:20}, (_,i) =>
+    `<div class="wbar" style="display:inline-block;width:4px;height:${8+Math.round(Math.sin(i*0.85)*9+9)}px;border-radius:3px;background:${s.color};margin:0 2px;"></div>`
+  ).join('');
+  return `<div class="fa">
+  <div style="background:${s.light};border-radius:18px;padding:1.1rem 1.25rem;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:700;color:${s.dark};background:${s.color}22;padding:3px 10px;border-radius:20px;">${s.emoji} ${s.label}</span>
+      <span style="font-size:12px;font-weight:600;color:${s.dark};">Scenario ${ST.si+1} / 3</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:38px;height:38px;border-radius:50%;background:${s.color};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;">${s.avatar}</div>
+      <p style="font-size:13px;font-weight:600;color:${s.dark};">${s.speaker}</p>
+    </div>
+  </div>
+
+  <div id="audioErr" style="display:none;background:#fee2e2;border:2px solid #fca5a5;border-radius:12px;padding:10px 13px;margin-bottom:10px;">
+    <p style="font-size:12px;font-weight:700;color:#991b1b;">⚠️ Audio not available in this browser.</p>
+    <p style="font-size:11px;color:#7f1d1d;margin-top:2px;">Read the text shown below and answer from memory instead. Try Chrome or Edge for audio.</p>
+  </div>
+
+  <div id="wavebox" style="display:flex;align-items:center;justify-content:center;height:40px;margin-bottom:10px;">${bars}</div>
+
+  <div id="tbox" style="min-height:60px;padding:0.9rem 1.1rem;background:#fff;border:2px solid ${s.light};border-radius:14px;margin-bottom:12px;font-size:14px;line-height:1.75;color:#374151;transition:opacity 0.5s;">
+    <span id="ttxt" style="color:#9ca3af;font-style:italic;">Press Play — the scenario will be spoken aloud through your speakers.</span>
+  </div>
+
+  <div id="pctrl" style="text-align:center;">
+    <button id="pbtn" onclick="doPlay()"
+      style="padding:13px 40px;font-size:15px;font-weight:700;background:${s.color};color:#fff;border:none;border-radius:13px;cursor:pointer;font-family:inherit;box-shadow:0 4px 18px ${s.color}55;letter-spacing:0.3px;">
+      🔊 Play Audio
+    </button>
+    <p style="font-size:11px;color:#9ca3af;margin-top:8px;">Audio plays through your device speakers / earphones</p>
+  </div>
+
+  <div id="rrow" style="display:none;text-align:center;">
+    <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:10px;margin-bottom:10px;">
+      <p style="font-size:13px;font-weight:600;color:#166534;">✅ Transcript hidden — answer from memory!</p>
+    </div>
+    <button onclick="ST.screen='qs';render();"
+      style="padding:11px 32px;font-size:14px;font-weight:700;background:${s.color};color:#fff;border:none;border-radius:12px;cursor:pointer;font-family:inherit;">
+      Answer →
+    </button>
+  </div></div>`;
+}
+
+function doPlay() {
+  if (ST.playing) return;
+  const s = SC[ST.si];
+  const btn = $('pbtn'); const ttxt = $('ttxt');
+
+  if (!window.speechSynthesis) {
+    // Graceful fallback — show text
+    const ae = $('audioErr'); if (ae) ae.style.display = 'block';
+    if (ttxt) { ttxt.style.color = '#374151'; ttxt.style.fontStyle = 'normal'; ttxt.textContent = s.line; }
+    setTimeout(() => showReflect(), 3000);
+    return;
+  }
+
+  ST.playing = true;
+  if (btn) { btn.textContent = '🔊 Speaking…'; btn.disabled = true; btn.style.background = '#6b7280'; }
+  if (ttxt) { ttxt.style.color = '#374151'; ttxt.style.fontStyle = 'normal'; ttxt.textContent = s.line; }
+
+  waveOn('.wbar');
+
+  speak(s.line, 0.88, 1.05,
+    () => {   // success
+      ST.playing = false;
+      waveOff('.wbar');
+      fadeHideThenReflect();
+    },
+    (err) => { // error
+      ST.playing = false;
+      waveOff('.wbar');
+      const ae = $('audioErr'); if (ae) ae.style.display = 'block';
+      if (btn) { btn.textContent = '🔊 Retry'; btn.disabled = false; btn.style.background = s.color; }
+    }
+  );
+}
+
+function fadeHideThenReflect() {
+  setTimeout(() => {
+    const tb = $('tbox'); if (tb) tb.style.opacity = '0';
+    const pc = $('pctrl'); if (pc) pc.style.opacity = '0';
+    setTimeout(() => {
+      const tb2 = $('tbox'); if (tb2) tb2.style.display = 'none';
+      const pc2 = $('pctrl'); if (pc2) pc2.style.display = 'none';
+      showReflect();
+    }, 500);
+  }, 300);
+}
+function showReflect() {
+  const rr = $('rrow'); if (rr) rr.style.display = 'block';
+}
+function waveOn(sel) {
+  document.querySelectorAll(sel).forEach((b,i) => {
+    b.style.animation = `wavego ${0.38+Math.random()*0.44}s ease-in-out infinite`;
+    b.style.animationDelay = `${(i*0.055).toFixed(2)}s`;
+  });
+}
+function waveOff(sel) {
+  document.querySelectorAll(sel).forEach(b => { b.style.animation = 'none'; b.style.transform = 'scaleY(0.35)'; });
+}
+
+/* ═══════════════════════════════════════════════════
+   QUESTIONS SCREEN
+═══════════════════════════════════════════════════ */
+function rQs() {
+  const s = SC[ST.si];
+  if (!ST.ans[ST.si]) ST.ans[ST.si] = {};
+  return `<div class="fa">
+  <div style="background:${s.light};border-radius:16px;padding:0.9rem 1.1rem;margin-bottom:10px;display:flex;align-items:center;gap:9px;">
+    <div style="width:34px;height:34px;border-radius:50%;background:${s.color};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;">${s.avatar}</div>
+    <p style="font-size:13px;font-weight:600;color:${s.dark};">${s.speaker} — answer from memory</p>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;">
+  ${s.qs.map((q,qi) => `
+  <div style="background:#fff;border:2px solid ${DIM[q.dim].bg};border-radius:15px;padding:0.9rem 1.1rem;">
+    <span style="font-size:10px;font-weight:700;padding:3px 9px;background:${DIM[q.dim].bg};color:${DIM[q.dim].color};border-radius:20px;display:inline-block;margin-bottom:7px;">${DIM[q.dim].emoji} ${DIM[q.dim].label}</span>
+    <p style="font-size:13px;font-weight:600;color:#1e1b4b;margin-bottom:8px;line-height:1.5;">${q.text}</p>
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      ${q.opts.map((o,oi) => `<button class="opt" id="o${qi}_${oi}" onclick="pick(${qi},${oi})">${String.fromCharCode(65+oi)}. ${o}</button>`).join('')}
+    </div>
+  </div>`).join('')}
+  </div>
+  <div style="text-align:center;">
+    <button onclick="submitQs()"
+      style="padding:12px 36px;font-size:14px;font-weight:700;background:linear-gradient(135deg,${s.color},${ST.si===0?'#0891b2':ST.si===1?'#d97706':'#059669'});color:#fff;border:none;border-radius:13px;cursor:pointer;font-family:inherit;">
+      ${ST.si < 2 ? 'Next Scenario →' : 'Play Word Catch 🎮'}
+    </button>
+  </div></div>`;
+}
+
+function pick(qi, oi) {
+  const n = SC[ST.si].qs[qi].opts.length;
+  for (let i = 0; i < n; i++) { const b = $(`o${qi}_${i}`); if (b) b.className = 'opt'; }
+  const sel = $(`o${qi}_${oi}`); if (sel) sel.className = 'opt sel';
+  if (!ST.ans[ST.si]) ST.ans[ST.si] = {};
+  ST.ans[ST.si][qi] = oi;
+}
+
+function submitQs() {
+  SC[ST.si].qs.forEach((q, qi) => {
+    const a = ST.ans[ST.si]?.[qi]; if (a === undefined) return;
+    if (q.self) ST.scores.S.push(q.self[a] ?? 1);
+    else        ST.scores[q.dim].push(a === q.cor ? 5 : 1);
+  });
+  if (ST.si < 2) { ST.si++; ST.screen = 'play'; render(); }
+  else           { buildGame(); ST.screen = 'game'; ST.gi = 0; ST.gameScore = 0; render(); }
+}
+
+/* ═══════════════════════════════════════════════════
+   WORD CATCH GAME
+═══════════════════════════════════════════════════ */
+function buildGame() {
+  ST.gameRounds = sh(WGAME).slice(0, 5).map(g => {
+    const opts = sh([g.word, ...g.distractors.slice(0, 3)]);
+    return { ...g, opts, cor: g.word };
+  });
+}
+
+function rGame() {
+  const total = ST.gameRounds.length;
+  if (ST.gi >= total) {
+    ST.scores.G.push(Math.round(ST.gameScore / total * 5));
+    ST.screen = 'results'; render(); return '';
+  }
+  const g   = ST.gameRounds[ST.gi];
+  const prog = Math.round(ST.gi / total * 100);
+  const bcs  = sh(BCOLS).slice(0, g.opts.length);
+  return `<div class="fa">
+  <div style="background:linear-gradient(135deg,#d1fae5,#cffafe);border-radius:20px;padding:1.1rem 1.25rem;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="font-size:13px;font-weight:800;color:#065f46;">🎮 Word Catch!</span>
+      <span style="font-size:12px;font-weight:600;color:#065f46;">${ST.gi+1} / ${total}</span>
+    </div>
+    <div style="height:6px;background:rgba(0,0,0,0.08);border-radius:4px;overflow:hidden;">
+      <div style="height:100%;background:#059669;width:${prog}%;border-radius:4px;transition:width 0.4s;"></div>
+    </div>
+  </div>
+
+  <div style="background:#fff;border:3px dashed #86efac;border-radius:18px;padding:1.5rem;text-align:center;margin-bottom:14px;">
+    <p style="font-size:13px;color:#6b7280;margin-bottom:12px;font-weight:600;">🔊 Hear the word spoken aloud — then tap the matching bubble!</p>
+    <button id="speakBtn" onclick="doSpeakWord()"
+      style="padding:14px 32px;font-size:15px;font-weight:800;background:linear-gradient(135deg,#059669,#0891b2);color:#fff;border:none;border-radius:14px;cursor:pointer;font-family:inherit;box-shadow:0 4px 16px rgba(5,150,105,0.4);animation:pulse 1.8s infinite;">
+      🔊 Hear the Word
+    </button>
+    <div id="wavegame" style="display:flex;align-items:center;justify-content:center;gap:3px;height:36px;margin-top:12px;opacity:0;transition:opacity 0.3s;">
+      ${Array.from({length:16}, (_,i) => `<div class="gbar" style="display:inline-block;width:4px;height:${6+Math.round(Math.sin(i*0.9)*8+8)}px;border-radius:3px;background:#059669;margin:0 1.5px;"></div>`).join('')}
+    </div>
+  </div>
+
+  <div id="fbBox" style="display:none;text-align:center;margin-bottom:10px;padding:10px 14px;border-radius:14px;font-size:14px;font-weight:700;"></div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:0 4px;">
+    ${g.opts.map((o,oi) => `
+    <button class="bubble" id="bbl${oi}" onclick="pickBubble('${o}',${oi})"
+      style="background:${bcs[oi].bg};color:${bcs[oi].fg};min-width:90px;padding:12px 22px;border:2.5px solid transparent;">
+      ${o}
+    </button>`).join('')}
+  </div>
+
+  <p style="text-align:center;font-size:12px;color:#9ca3af;margin-top:12px;">
+    Score so far: <strong style="color:#059669;">${ST.gameScore}</strong> / ${ST.gi} correct
+  </p></div>`;
+}
+
+function doSpeakWord() {
+  const g = ST.gameRounds[ST.gi];
+  ST.gSpoken = true;
+  const btn = $('speakBtn'); const wv = $('wavegame');
+  if (btn) { btn.style.animation = 'none'; btn.textContent = '🔊 Speaking…'; btn.disabled = true; btn.style.background = '#6b7280'; }
+  if (wv) wv.style.opacity = '1';
+  waveOn('.gbar');
+
+  speak(g.word, 0.72, 1.1,
+    () => {
+      waveOff('.gbar');
+      if (wv) wv.style.opacity = '0';
+      if (btn) { btn.textContent = '🔊 Hear Again'; btn.disabled = false; btn.style.background = 'linear-gradient(135deg,#059669,#0891b2)'; }
+    },
+    () => {
+      waveOff('.gbar');
+      if (wv) wv.style.opacity = '0';
+      if (btn) { btn.textContent = '🔊 Hear Again'; btn.disabled = false; btn.style.background = 'linear-gradient(135deg,#059669,#0891b2)'; }
+    }
+  );
+}
+
+function pickBubble(word, oi) {
+  if (!ST.gSpoken) {
+    const fb = $('fbBox');
+    if (fb) { fb.style.display = 'block'; fb.style.background = '#fef3c7'; fb.style.color = '#92400e'; fb.textContent = '👆 Press "Hear the Word" first!'; }
+    return;
+  }
+  const g = ST.gameRounds[ST.gi];
+  const isOk = word === g.cor;
+  stopSpeech();
+  document.querySelectorAll('.bubble').forEach(b => b.classList.add('disabled'));
+  const selBtn = $(`bbl${oi}`);
+  const fb = $('fbBox');
+  if (isOk) {
+    ST.gameScore++;
+    if (selBtn) { selBtn.classList.add('correct'); selBtn.style.border = '2.5px solid #059669'; selBtn.style.background = '#d1fae5'; }
+    if (fb) { fb.style.display = 'block'; fb.style.background = '#d1fae5'; fb.style.color = '#065f46'; fb.textContent = '🎉 Correct! Sharp listening!'; }
+  } else {
+    if (selBtn) { selBtn.classList.add('wrong'); selBtn.style.background = '#fee2e2'; selBtn.style.border = '2.5px solid #ef4444'; }
+    document.querySelectorAll('.bubble').forEach((b,i) => {
+      if (g.opts[i] === g.cor) { b.style.background = '#d1fae5'; b.style.border = '2.5px solid #059669'; }
+    });
+    if (fb) { fb.style.display = 'block'; fb.style.background = '#fee2e2'; fb.style.color = '#991b1b'; fb.textContent = `❌ The word was "${g.cor}" — listen more carefully!`; }
+  }
+  ST.gSpoken = false;
+  setTimeout(() => {
+    ST.gi++;
+    if (ST.gi >= ST.gameRounds.length) {
+      ST.scores.G.push(Math.round(ST.gameScore / ST.gameRounds.length * 5));
+      ST.screen = 'results'; render();
+    } else { render(); }
+  }, 1800);
+}
+
+/* ═══════════════════════════════════════════════════
+   RESULTS SCREEN
+═══════════════════════════════════════════════════ */
+function avg(a) { if (!a.length) return 50; return Math.min(100, Math.round(a.reduce((x,y)=>x+y,0)/a.length*20)); }
+function lvl(s) {
+  if (s >= 80) return { l:'Expert Listener',  e:'🏆', c:'#059669' };
+  if (s >= 60) return { l:'Engaged Listener', e:'🌟', c:'#d97706' };
+  return             { l:'Growing Listener',  e:'🌱', c:'#7c3aed' };
+}
+
+function rResults() {
+  const R=avg(ST.scores.R), C=avg(ST.scores.C), S=avg(ST.scores.S), G=avg(ST.scores.G);
+  const ov = Math.round((R+C+S+G)/4); const lv = lvl(ov);
+  const gs = ST.gameScore; const gt = ST.gameRounds.length;
+  const post = `I just completed a Listening Skills Check and scored ${ov}/100 — ${lv.l}! 🎧\n\n🧠 Recall: ${R}/100\n🎯 Critical Listening: ${C}/100\n🪷 Mindset: ${S}/100\n🎮 Word Catch: ${gs}/${gt} correct\n\n#ActiveListening #ProfessionalDevelopment #SelfAwareness #Leadership`;
+  const tips = {
+    R:{ g:'Sharp recall — you catch specifics others miss.',           b:'Repeat key details mentally right after someone speaks.' },
+    C:{ g:'You find the real message beneath the surface.',            b:'Ask "what is really being asked here?" after each exchange.' },
+    S:{ g:'Open and non-reactive — a genuine listening strength.',     b:'Clear your mental queue before each conversation starts.' },
+    G:{ g:`Excellent phonetic focus — ${gs}/${gt} words caught!`,      b:`You caught ${gs}/${gt} words. Practise active audio attention daily.` }
+  };
+  return `<div class="fa">
+  <div style="background:linear-gradient(135deg,#ede9fe,#cffafe,#fef3c7,#d1fae5);border-radius:20px;padding:1.5rem;text-align:center;margin-bottom:12px;">
+    <div style="font-size:40px;animation:popIn 0.5s ease both;">${lv.e}</div>
+    <h2 style="font-size:19px;font-weight:800;color:#1e1b4b;margin:6px 0 2px;">${lv.l}</h2>
+    <div style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:3px solid ${lv.c};border-radius:50px;padding:8px 24px;margin-top:10px;box-shadow:0 4px 16px ${lv.c}33;">
+      <span style="font-size:28px;font-weight:800;color:${lv.c};">${ov}</span>
+      <span style="font-size:13px;color:#9ca3af;font-weight:500;">/ 100</span>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px;">
+    ${[['R',R],['C',C],['S',S],['G',G]].map(([d,sc]) => `
+    <div style="background:${DIM[d].bg};border-radius:13px;padding:10px 4px;text-align:center;">
+      <div style="font-size:16px;">${DIM[d].emoji}</div>
+      <p style="font-size:9px;font-weight:700;color:${DIM[d].color};margin:3px 0 1px;">${DIM[d].label}</p>
+      <p style="font-size:18px;font-weight:800;color:${DIM[d].color};">${sc}</p>
+      <div style="height:3px;background:rgba(0,0,0,0.08);border-radius:3px;overflow:hidden;margin-top:3px;">
+        <div style="height:100%;background:${DIM[d].color};width:${sc}%;border-radius:3px;"></div>
+      </div>
+    </div>`).join('')}
+  </div>
+  <div style="background:#d1fae5;border:2px solid #6ee7b7;border-radius:16px;padding:1rem;margin-bottom:12px;text-align:center;">
+    <p style="font-size:13px;font-weight:800;color:#065f46;">🎮 Word Catch: ${gs} / ${gt} correct</p>
+    <div style="display:flex;justify-content:center;gap:6px;margin-top:8px;">
+      ${Array.from({length:gt}, (_,i) => `<span style="font-size:20px;">${i<gs?'✅':'❌'}</span>`).join('')}
+    </div>
+  </div>
+  <div style="position:relative;height:190px;margin-bottom:12px;background:#fff;border-radius:16px;border:2px solid #f3f0ff;padding:6px;">
+    <canvas id="rc"></canvas>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px;">
+    ${[['R',R],['C',C],['S',S],['G',G]].map(([d,sc]) => `
+    <div style="background:#fff;border:2px solid ${DIM[d].bg};border-radius:12px;padding:10px 13px;display:flex;gap:9px;align-items:flex-start;">
+      <span style="font-size:15px;">${DIM[d].emoji}</span>
+      <div>
+        <p style="font-size:11px;font-weight:700;color:${DIM[d].color};margin-bottom:2px;">${DIM[d].label} · ${sc}/100</p>
+        <p style="font-size:11px;color:#4b5563;line-height:1.5;">${sc>=60 ? tips[d].g : tips[d].b}</p>
+      </div>
+    </div>`).join('')}
+  </div>
+  <div style="background:linear-gradient(135deg,#1e1b4b,#0c4a6e);border-radius:18px;padding:1.2rem;margin-bottom:12px;">
+    <p style="font-size:14px;font-weight:700;color:#fff;margin-bottom:8px;">🔗 Share on LinkedIn</p>
+    <div style="background:rgba(255,255,255,0.08);border:1.5px solid rgba(255,255,255,0.18);border-radius:11px;padding:11px;margin-bottom:9px;">
+      <p style="font-size:12px;color:#e0e7ff;line-height:1.75;white-space:pre-line;">${post}</p>
+    </div>
+    <button id="cpybtn" onclick="copyPost()"
+      style="width:100%;padding:11px;font-size:13px;font-weight:700;background:#7c3aed;color:#fff;border:none;border-radius:11px;cursor:pointer;font-family:inherit;">
+      📋 Copy & Post to LinkedIn
+    </button>
+  </div>
+  <div style="text-align:center;">
+    <button onclick="retake()"
+      style="padding:10px 26px;font-size:13px;font-weight:600;background:#fff;color:#7c3aed;border:2px solid #ede9fe;border-radius:11px;cursor:pointer;font-family:inherit;">
+      🔄 Retake
+    </button>
+  </div></div>`;
+}
+
+function drawChart() {
+  const c = $('rc'); if (!c || !window.Chart) return;
+  const R=avg(ST.scores.R), C=avg(ST.scores.C), S=avg(ST.scores.S), G=avg(ST.scores.G);
+  new Chart(c, {
+    type: 'radar',
+    data: {
+      labels: ['Recall 🧠','Critical 🎯','Mindset 🪷','Word Catch 🎮'],
+      datasets: [{ data:[R,C,S,G], borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,0.1)',
+        borderWidth:2.5, pointBackgroundColor:['#7c3aed','#0891b2','#d97706','#059669'], pointRadius:5 }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales:{ r:{ min:0, max:100, ticks:{ stepSize:25, font:{size:9}, color:'#9ca3af' },
+        grid:{ color:'rgba(0,0,0,0.06)' }, pointLabels:{ font:{size:10,weight:'600'} } } },
+      plugins:{ legend:{ display:false } }
+    }
+  });
+}
+
+function copyPost() {
+  const R=avg(ST.scores.R), C=avg(ST.scores.C), S=avg(ST.scores.S), G=avg(ST.scores.G);
+  const ov = Math.round((R+C+S+G)/4); const lv = lvl(ov);
+  const gs = ST.gameScore; const gt = ST.gameRounds.length;
+  const t = `I just completed a Listening Skills Check and scored ${ov}/100 — ${lv.l}! 🎧\n\n🧠 Recall: ${R}/100\n🎯 Critical Listening: ${C}/100\n🪷 Mindset: ${S}/100\n🎮 Word Catch: ${gs}/${gt} correct\n\n#ActiveListening #ProfessionalDevelopment #SelfAwareness #Leadership`;
+  navigator.clipboard.writeText(t)
+    .then(()  => { const b=$('cpybtn'); if(b){b.textContent='✅ Copied! Paste on LinkedIn'; b.style.background='#059669';} })
+    .catch(()  => { const b=$('cpybtn'); if(b){b.textContent='Select text above and copy manually'; b.style.background='#059669';} });
+}
+
+function retake() {
+  stopSpeech();
+  ST = { screen:'intro', si:0, playing:false, ans:{}, scores:{R:[],C:[],S:[],G:[]}, gi:0, gameRounds:[], gameScore:0, gSpoken:false };
+  render();
+}
+
+/* boot */
+render();
+</script>
+</body>
+</html>
